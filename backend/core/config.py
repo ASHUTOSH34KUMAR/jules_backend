@@ -2,12 +2,14 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()  # load from .env
+load_dotenv()
 
 class Settings:
     GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "")
     GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
     GITHUB_OAUTH_CALLBACK_URL: str = os.getenv("GITHUB_OAUTH_CALLBACK_URL", "")
     GITHUB_OAUTH_SCOPES: str = os.getenv("GITHUB_OAUTH_SCOPES", "repo read:user")
+
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
 settings = Settings()

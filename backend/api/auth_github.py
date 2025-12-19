@@ -1,14 +1,61 @@
 # backend/api/auth_github.py
+import httpx
 import secrets
 import urllib.parse
-from fastapi import APIRouter, Response
+
+from fastapi import APIRouter, Request, HTTPException, Response
 from fastapi.responses import RedirectResponse
+
 from backend.core.config import settings
+from backend.core.db import SessionLocal
+from backend.models import User, GitHubToken
 
 router = APIRouter(prefix="/auth/github", tags=["auth"])
 
 # For now, we'll keep state in memory (for dev only)
 STATE_TOKENS = set()
+
+def get_or_create_user_from_github(db, github_user_data: dict) -> User:
+    github_id = github_user_data.get("id")
+    github_login = github_user_data.get("login")
+    name = github_user_data.get("name")
+
+    user = db.query(User).filter(User.github_id == github_id).first()
+    if user:
+        # Optionally update name/login
+        user.github_login = github_login
+        user.name = name
+    else:
+        user = User(
+            github_id=github_id,
+            github_login=github_login,
+            name=name,
+        )
+        db.add(user)
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def store_github_token(db, user: User, access_token: str, token_type: str | None, scope: str | None):
+    # For simplicity, we keep only one token per user.
+    existing = db.query(GitHubToken).filter(GitHubToken.user_id == user.id).first()
+    if existing:
+        existing.access_token = access_token
+        existing.token_type = token_type
+        existing.scope = scope
+    else:
+        token = GitHubToken(
+            user_id=user.id,
+            access_token=access_token,
+            token_type=token_type,
+            scope=scope,
+        )
+        db.add(token)
+
+    db.commit()
+
 
 @router.get("/login")
 def github_login():
@@ -56,6 +103,9 @@ async def github_callback(request: Request, code: str = None, state: str = None)
         token_data = token_resp.json()
 
     access_token = token_data.get("access_token")
+    token_type = token_data.get("token_type")
+    scope = token_data.get("scope")
+
     if not access_token:
         raise HTTPException(status_code=400, detail="Failed to get access token")
 
@@ -68,15 +118,23 @@ async def github_callback(request: Request, code: str = None, state: str = None)
     ) as client:
         user_resp = await client.get("https://api.github.com/user")
         user_resp.raise_for_status()
-        user_data = user_resp.json()
+        github_user_data = user_resp.json()
 
-    # ⚠️ DEV ONLY: just return token + user info so we see it works
+    # 4. Store user + token in DB
+    db = SessionLocal()
+    try:
+        user = get_or_create_user_from_github(db, github_user_data)
+        store_github_token(db, user, access_token, token_type, scope)
+    finally:
+        db.close()
+
+    # 5. Return simple message (no token in response now)
     return {
-        "access_token": access_token,
-        "github_user": {
-            "id": user_data.get("id"),
-            "login": user_data.get("login"),
-            "name": user_data.get("name"),
+        "message": "GitHub connected successfully",
+        "user": {
+            "id": user.id,
+            "github_id": user.github_id,
+            "login": user.github_login,
+            "name": user.name,
         },
     }
-

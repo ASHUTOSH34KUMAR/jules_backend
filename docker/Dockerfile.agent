@@ -1,0 +1,27 @@
+# docker/Dockerfile.agent
+
+# Base OS
+FROM ubuntu:22.04
+
+# Install basic tools: git, Python, Node (you can add more later)
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create workspace directory where repo will be cloned
+RUN mkdir -p /workspace
+
+# Copy agent code into the image
+WORKDIR /app
+COPY agent/ /app/agent/
+
+# Set working directory for the agent
+WORKDIR /app/agent
+
+# Default command: run the agent
+ENTRYPOINT ["python3", "main.py"]
