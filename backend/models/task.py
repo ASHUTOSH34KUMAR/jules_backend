@@ -1,7 +1,8 @@
 # backend/models/task.py
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from backend.core.db import Base
+
 
 class Task(Base):
     __tablename__ = "tasks"
@@ -21,3 +22,4 @@ class Task(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    log_text = Column(Text, nullable=True, default="")                     # logs or error messages

@@ -17,6 +17,10 @@ class TaskCreate(BaseModel):
     branch: str           # "main"
     prompt: str           # "Upgrade to Next.js 15..."
 
+
+class TaskLogAppend(BaseModel):
+    message: str
+
 class TaskResponse(BaseModel):
     id: int
     repo_full_name: str
@@ -103,3 +107,60 @@ def start_task(task_id: int, db: Session = Depends(get_db)):
     start_task_container(task)
 
     return task
+
+
+@router.post("/{task_id}/logs")
+def append_log(task_id: int, payload: TaskLogAppend, db: Session = Depends(get_db)):
+    user_id = 1  # TODO real auth later
+
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.log_text is None:
+        task.log_text = ""
+
+    task.log_text += payload.message + "\n"
+    db.commit()
+    return {"ok": True}
+
+@router.get("/{task_id}/logs")
+def get_logs(task_id: int, db: Session = Depends(get_db)):
+    user_id = 1
+
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return {"task_id": task.id, "logs": task.log_text or ""}
+
+
+@router.post("/{task_id}/complete")
+def complete_task(task_id: int, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.status = "COMPLETED"
+    db.commit()
+    return {"ok": True, "status": task.status}
+
+
+class TaskFail(BaseModel):
+    reason: str | None = None
+
+@router.post("/{task_id}/fail")
+def fail_task(task_id: int, payload: TaskFail, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.status = "FAILED"
+    if payload.reason:
+        if task.log_text is None:
+            task.log_text = ""
+        task.log_text += f"[FAIL] {payload.reason}\n"
+    db.commit()
+    return {"ok": True, "status": task.status}

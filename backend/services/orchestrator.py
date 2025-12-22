@@ -22,6 +22,7 @@ def start_task_container(task: Task):
         "-e", f"TASK_ID={task.id}",
         "-e", f"REPO_URL={repo_url}",
         "-e", f"BRANCH={task.branch}",
+        "-e", "BACKEND_URL=http://host.docker.internal:8000",
         "jules-agent:dev",
     ]
 
