@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip3 install httpx
 
+RUN pip3 install openai
+
 # Create workspace directory where repo will be cloned
 RUN mkdir -p /workspace
 

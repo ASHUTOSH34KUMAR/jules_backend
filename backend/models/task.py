@@ -17,6 +17,13 @@ class Task(Base):
     base_commit_sha = Column(String, nullable=True)          # commit hash at task creation
 
     prompt = Column(String, nullable=False)                  # what user asked: "Upgrade Next.js..."
+    target_file = Column(String, nullable=True)               # optional: "package.json", "app/page.tsx", etc.
+    diff_text = Column(Text, nullable=True, default="")                     # generated diff text
+
+
+    work_branch = Column(String, nullable=True)        # git branch created for this task
+    pr_url = Column(String, nullable=True)               # URL of created PR, if any
+    pr_number = Column(Integer, nullable=True)            # PR number, if any
 
     status = Column(String, nullable=False, default="QUEUED")  # QUEUED, RUNNING, COMPLETED, FAILED
 

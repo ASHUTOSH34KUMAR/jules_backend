@@ -2,11 +2,15 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from backend.models.user import User
 from backend.services.orchestrator import start_task_container
 from backend.core.db import get_db
 from backend.models import Task
 from backend.services.github_token_service import get_token_for_user
 from backend.github_client import GitHubClient
+from pydantic import BaseModel
+import httpx
+from backend.models.github_token import GitHubToken
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -32,8 +36,36 @@ class TaskResponse(BaseModel):
     class Config:
         from_attributes = True  # so we can return ORM model directly
 
+class TaskSetTarget(BaseModel):
+    target_file: str      # e.g. "package.json"
+
+class TaskDiffIn(BaseModel):
+    diff: str
+
+class PublishIn(BaseModel):
+    title: str | None = None
+    body: str | None = None
+
+class WorkBranchIn(BaseModel):
+    work_branch: str
+
+
 
 # ----- Routes -----
+
+
+
+@router.post("/{task_id}/work-branch")
+def set_work_branch(task_id: int, payload: WorkBranchIn, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.work_branch = payload.work_branch
+    db.commit()
+    return {"ok": True, "work_branch": task.work_branch}
+
+
 
 @router.post("", response_model=TaskResponse)
 async def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
@@ -86,25 +118,30 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
     return task
 
 
-@router.post("/{task_id}/start", response_model=TaskResponse)
+@router.post("/{task_id}/start")
 def start_task(task_id: int, db: Session = Depends(get_db)):
-    # TODO: real auth later, for now assume user_id=1
-    user_id = 1
+    user_id = 1  # dev for now
 
     task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    if task.status not in ("QUEUED", "FAILED"):
+    if task.status != "QUEUED":
         raise HTTPException(status_code=400, detail=f"Cannot start task in status {task.status}")
 
-    # Mark as RUNNING
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # (Optional but recommended)
+    if not user.github_login:
+        raise HTTPException(status_code=400, detail="GitHub token not found for user")
+
     task.status = "RUNNING"
     db.commit()
-    db.refresh(task)
 
-    # Fire-and-forget: start Docker container
-    start_task_container(task)
+    # ✅ pass user now
+    start_task_container(task, user)
 
     return task
 
@@ -164,3 +201,93 @@ def fail_task(task_id: int, payload: TaskFail, db: Session = Depends(get_db)):
         task.log_text += f"[FAIL] {payload.reason}\n"
     db.commit()
     return {"ok": True, "status": task.status}
+
+@router.post("/{task_id}/target")
+def set_target_file(task_id: int, payload: TaskSetTarget, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.target_file = payload.target_file
+    db.commit()
+    return {"ok": True, "task_id": task.id, "target_file": task.target_file}
+
+
+@router.post("/{task_id}/diff")
+def save_diff(task_id: int, payload: TaskDiffIn, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.diff_text = payload.diff
+    db.commit()
+    return {"ok": True}
+
+@router.get("/{task_id}/diff")
+def get_diff(task_id: int, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"task_id": task.id, "diff": task.diff_text or ""}
+
+
+@router.post("/{task_id}/publish")
+async def publish_task(task_id: int, payload: PublishIn | None = None, db: Session = Depends(get_db)):
+    user_id = 1  # keep same dev approach
+
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if not task.work_branch:
+        raise HTTPException(status_code=400, detail="work_branch not set (agent did not push?)")
+
+    # parse owner/repo from repo_full_name
+    if not task.repo_full_name or "/" not in task.repo_full_name:
+        raise HTTPException(status_code=400, detail="Invalid repo_full_name on task")
+
+    owner, repo = task.repo_full_name.split("/", 1)
+
+    # get user's github token from DB (same method you already use for repos/branches)
+    # Example: user.github_access_token (adjust to your project)
+    user = db.query(User).filter(User.id == user_id).first()
+    token = get_token_for_user(user_id)
+    if not user or not token:
+        raise HTTPException(status_code=401, detail="GitHub token missing")
+
+    title = (payload.title if payload and payload.title else f"Jules: Task {task.id}")
+    body = (payload.body if payload and payload.body else (task.prompt or ""))
+
+    async with httpx.AsyncClient(
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        timeout=30.0,
+    ) as client:
+        gh = GitHubClient(client)
+        pr = await gh.create_pull_request(
+            owner=owner,
+            repo=repo,
+            head=task.work_branch,     # e.g. "jules/task-1"
+            base=task.branch,          # e.g. "main"
+            title=title,
+            body=body,
+        )
+
+    task.pr_url = pr.get("html_url")
+    task.pr_number = pr.get("number")
+    task.status = "COMPLETED"
+    db.commit()
+
+    return {
+        "ok": True,
+        "task_id": task.id,
+        "work_branch": task.work_branch,
+        "pr_url": task.pr_url,
+        "pr_number": task.pr_number,
+        "status": task.status,
+    }
