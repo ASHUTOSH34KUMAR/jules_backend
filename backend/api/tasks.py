@@ -326,13 +326,23 @@ async def publish_task(task_id: int, payload: PublishIn | None = None, db: Sessi
         raise HTTPException(status_code=400, detail=f"Failed to compare branches: {e}") from e
 
     if ahead_by == 0:
-        raise HTTPException(
-            status_code=400,
-            detail=(
+        # Provide more helpful debug info: include branch tip SHAs and compare status
+        try:
+            base_branch_data = await gh.get_branch(owner, repo, task.branch)
+            work_branch_data = await gh.get_branch(owner, repo, task.work_branch)
+            base_sha = base_branch_data.get("commit", {}).get("sha")
+            work_sha = work_branch_data.get("commit", {}).get("sha")
+            cmp_status = cmp.get("status", "<unknown>") if isinstance(cmp, dict) else "<unknown>"
+            detail = (
+                f"No commits between {task.branch} (sha={base_sha}) and {task.work_branch} (sha={work_sha}). "
+                f"Compare status: {cmp_status}. Make sure you pushed commits to the work branch before creating a PR."
+            )
+        except Exception:
+            detail = (
                 f"No commits between {task.branch} and {task.work_branch}. "
                 "Make sure you pushed commits to the work branch before creating a PR."
-            ),
-        )
+            )
+        raise HTTPException(status_code=400, detail=detail)
 
     try:
         pr = await gh.create_pull_request(
