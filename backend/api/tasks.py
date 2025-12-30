@@ -285,91 +285,13 @@ def get_diff(task_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{task_id}/publish")
 async def publish_task(task_id: int, payload: PublishIn | None = None, db: Session = Depends(get_db)):
-    user_id = 1
+    """PR creation has been removed/disabled.
 
-    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    This endpoint now returns an explicit error so UI or callers don't attempt
+    to create PRs via the backend.
+    """
+    raise HTTPException(status_code=400, detail="PR creation is disabled in this deployment")
 
-    # Option B gate: PR only after PUSH
-    if task.status != "PUSHED":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot create PR until branch is pushed. Current status: {task.status}"
-        )
-
-    if not task.work_branch:
-        raise HTTPException(status_code=400, detail="work_branch not set")
-
-    if not task.repo_full_name or "/" not in task.repo_full_name:
-        raise HTTPException(status_code=400, detail="Invalid repo_full_name on task")
-
-    owner, repo = task.repo_full_name.split("/", 1)
-
-    token = get_token_for_user(user_id)
-    if not token:
-        raise HTTPException(status_code=401, detail="GitHub token missing")
-
-    title = payload.title if payload and payload.title else f"Jules: Task {task.id}"
-    body = payload.body if payload and payload.body else (task.prompt or "")
-
-    # ✅ simplest correct usage with your GitHubClient
-    gh = GitHubClient(token)
-
-    # Pre-check: ensure work_branch has commits ahead of base branch. This avoids
-    # a confusing GitHub 422 when there are no commits between branches.
-    try:
-        cmp = await gh.compare_commits(owner, repo, task.branch, task.work_branch)
-        ahead_by = cmp.get("ahead_by", 0) if isinstance(cmp, dict) else 0
-    except Exception as e:
-        # If compare fails for some reason, surface as a helpful error
-        raise HTTPException(status_code=400, detail=f"Failed to compare branches: {e}") from e
-
-    if ahead_by == 0:
-        # Provide more helpful debug info: include branch tip SHAs and compare status
-        try:
-            base_branch_data = await gh.get_branch(owner, repo, task.branch)
-            work_branch_data = await gh.get_branch(owner, repo, task.work_branch)
-            base_sha = base_branch_data.get("commit", {}).get("sha")
-            work_sha = work_branch_data.get("commit", {}).get("sha")
-            cmp_status = cmp.get("status", "<unknown>") if isinstance(cmp, dict) else "<unknown>"
-            detail = (
-                f"No commits between {task.branch} (sha={base_sha}) and {task.work_branch} (sha={work_sha}). "
-                f"Compare status: {cmp_status}. Make sure you pushed commits to the work branch before creating a PR."
-            )
-        except Exception:
-            detail = (
-                f"No commits between {task.branch} and {task.work_branch}. "
-                "Make sure you pushed commits to the work branch before creating a PR."
-            )
-        raise HTTPException(status_code=400, detail=detail)
-
-    try:
-        pr = await gh.create_pull_request(
-            owner=owner,
-            repo=repo,
-            head=task.work_branch,
-            base=task.branch,
-            title=title,
-            body=body,
-        )
-    except Exception as e:
-        # Include GitHub error details in the API response for easier debugging
-        raise HTTPException(status_code=400, detail=f"Failed to create PR: {e}") from e
-
-    task.pr_url = pr.get("html_url")
-    task.pr_number = pr.get("number")
-    task.status = "PR_CREATED"
-    db.commit()
-
-    return {
-        "ok": True,
-        "task_id": task.id,
-        "work_branch": task.work_branch,
-        "pr_url": task.pr_url,
-        "pr_number": task.pr_number,
-        "status": task.status,
-    }
 
 
 @router.post("/{task_id}/plan", response_model=PlanOut)

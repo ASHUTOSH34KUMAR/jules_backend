@@ -309,9 +309,8 @@
 
         <div class="row" style="margin-top:10px;">
           <button id="btnApproveStart" class="primary" disabled>Approve & Start</button>
-          <button id="btnCreatePR" disabled>Create PR</button>
           <button id="btnPush" disabled>Push branch</button>
-        </div>
+        </div> 
 
         <div class="field" style="margin-top:12px;">
           <label>Task ID</label>
@@ -332,8 +331,7 @@
         <div><b>Status:</b> <span id="statusText">—</span></div>
         <div><b>Repo:</b> <span id="repoText">—</span></div>
         <div><b>Work branch:</b> <span id="workBranchText">—</span></div>
-        <div><b>PR:</b> <span id="prText">—</span></div>
-      </div>
+      </div> 
 
       <div class="tabs">
         <div class="tabset">
@@ -343,8 +341,7 @@
         </div>
         <div class="small-actions">
           <button id="btnCopyBranch" class="ghost" disabled>Copy branch</button>
-          <button id="btnOpenPR" class="ghost" disabled>Open PR</button>
-        </div>
+        </div> 
       </div>
 
       <pre id="output"></pre>
@@ -480,19 +477,6 @@
       document.getElementById("workBranchText").textContent = t.work_branch || "—";
       document.getElementById("workBranch").value = t.work_branch || "—";
 
-      // PR display
-      const prText = document.getElementById("prText");
-      const btnOpenPR = document.getElementById("btnOpenPR");
-      if(t.pr_url){
-        const label = t.pr_number ? `PR #${t.pr_number}` : "PR";
-        prText.innerHTML = `<a href="${t.pr_url}" target="_blank">${label}</a>`;
-        btnOpenPR.disabled = false;
-        btnOpenPR.onclick = () => window.open(t.pr_url, "_blank");
-      } else {
-        prText.textContent = "—";
-        btnOpenPR.disabled = true;
-        btnOpenPR.onclick = null;
-      }
 
       // Copy branch button
       const btnCopyBranch = document.getElementById("btnCopyBranch");
@@ -503,8 +487,6 @@
       };
 
       // Enable Create PR only when branch is pushed (PUSHED) and no PR yet
-      const btnCreatePR = document.getElementById("btnCreatePR");
-      btnCreatePR.disabled = !(t.work_branch && !t.pr_url && t.status === "PUSHED");
 
       // Push button
       const btnPush = document.getElementById("btnPush");
@@ -628,18 +610,6 @@
     }
   };
 
-  // Create PR (manual)
-  document.getElementById("btnCreatePR").onclick = async () => {
-    const id = document.getElementById("taskId").value.trim();
-    if(!id) return toast("No task id");
-    try{
-      await apiPost(`/tasks/${id}/publish`, {});
-      toast("PR requested");
-      await refreshAll();
-    }catch(e){
-      alert("Create PR failed:\n\n" + e.message);
-    }
-  };
 
   // Tabs click
   document.querySelectorAll(".tab").forEach(el => {
