@@ -129,12 +129,6 @@ async def github_callback(request: Request, code: str = None, state: str = None)
         db.close()
 
     # 5. Return simple message (no token in response now)
-    return {
-        "message": "GitHub connected successfully",
-        "user": {
-            "id": user.id,
-            "github_id": user.github_id,
-            "login": user.github_login,
-            "name": user.name,
-        },
-    }
+    response = RedirectResponse(url="/", status_code=302)
+    response.set_cookie(key="user_id", value=str(user.id), httponly=True, samesite="lax")
+    return response

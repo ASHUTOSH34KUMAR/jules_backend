@@ -168,6 +168,18 @@ def resolve_target_file(repo_dir: Path, target_file: str) -> Path | None:
 
     return None
 
+def set_status(backend_url: str | None, task_id: str, status: str):
+    if not backend_url:
+        return
+    try:
+        httpx.post(
+            f"{backend_url}/tasks/{task_id}/status",
+            json={"status": status},
+            timeout=10.0,
+        )
+    except Exception:
+        pass
+
 
 # ----------------------------
 # Main agent workflow
@@ -193,6 +205,10 @@ def main():
     post_log(backend_url, task_id, f"DEBUG: TASK_PROMPT length={len(task_prompt)}")
     post_log(backend_url, task_id, f"DEBUG: OPENAI_API_KEY set={bool(os.getenv('OPENAI_API_KEY'))}")
 
+    # support push mode (only push when MODE=push)
+    mode = os.getenv("MODE", "execute").lower()
+    post_log(backend_url, task_id, f"DEBUG: MODE={mode}")
+
     print("=== Jules Agent v2 (LLM single-file edit) ===")
     print(f"TASK_ID: {task_id}")
     print(f"REPO_URL: {repo_url}")
@@ -214,6 +230,45 @@ def main():
     workspace.mkdir(parents=True, exist_ok=True)
 
     try:
+        # If we're running in push mode, only execute the push steps
+        if mode == "push":
+            work_branch = os.getenv("WORK_BRANCH", "").strip()
+            if not work_branch:
+                raise RuntimeError("WORK_BRANCH not provided to push mode")
+
+            post_log(backend_url, task_id, f"Cloning repo for push: {repo_url}")
+            run(f"git clone {repo_url} {repo_dir}")
+            post_log(backend_url, task_id, "Clone completed for push.")
+
+            post_log(backend_url, task_id, f"Checking out branch: {work_branch}")
+            # Ensure we have the latest refs from remote before attempting checkout
+            run("git fetch --all --tags", cwd=str(repo_dir))
+            try:
+                run(f"git checkout {work_branch}", cwd=str(repo_dir))
+            except RuntimeError:
+                post_log(backend_url, task_id, f"Branch {work_branch} not found locally; attempting to checkout from remote origin/{work_branch}...")
+                try:
+                    run(f"git checkout -b {work_branch} origin/{work_branch}", cwd=str(repo_dir))
+                except RuntimeError:
+                    post_log(backend_url, task_id, f"Remote branch origin/{work_branch} not found; creating new local branch {work_branch}...")
+                    # Create a new local branch so we can push it
+                    run(f"git checkout -b {work_branch}", cwd=str(repo_dir))
+
+            owner, repo = repo_full_name.split("/", 1)
+            remote_url = f"https://x-access-token:{github_token}@github.com/{owner}/{repo}.git"
+
+            post_log(backend_url, task_id, "Setting authenticated remote URL for push...")
+            run(f"git remote set-url origin {remote_url}", cwd=str(repo_dir))
+
+            post_log(backend_url, task_id, f"Pushing branch: {work_branch}")
+            run(f"git push -u origin {work_branch}", cwd=str(repo_dir))
+            post_log(backend_url, task_id, "Push completed.")
+
+            post_log(backend_url, task_id, "Updating backend status to PUSHED")
+            set_status(backend_url, task_id, "PUSHED")
+            post_log(backend_url, task_id, "Task is now PUSHED. You can Create PR.")
+            return
+
         # 1) Clone
         post_log(backend_url, task_id, f"Cloning repo: {repo_url}")
         run(f"git clone {repo_url} {repo_dir}")
@@ -221,7 +276,13 @@ def main():
 
         # 2) Checkout branch
         post_log(backend_url, task_id, f"Checking out branch: {branch}")
-        run(f"git checkout {branch}", cwd=str(repo_dir))
+        # Ensure remote branches are available after clone
+        run("git fetch --all --tags", cwd=str(repo_dir))
+        try:
+            run(f"git checkout {branch}", cwd=str(repo_dir))
+        except RuntimeError:
+            # If the branch isn't present locally, try creating from origin/<branch>
+            run(f"git checkout -b {branch} origin/{branch}", cwd=str(repo_dir))
         post_log(backend_url, task_id, "Checkout completed.")
 
         # 3) Resolve target file and read it
@@ -323,26 +384,30 @@ def main():
         # For now, agent will call /publish and backend will use task.work_branch from DB.
         # So: we should also store work_branch on task BEFORE /start, OR add endpoint to set it.
 
-        # 10) Push branch using token
-        owner, repo = repo_full_name.split("/", 1)
-        remote_url = f"https://x-access-token:{github_token}@github.com/{owner}/{repo}.git"
+        # # 10) Push branch using token
+        # owner, repo = repo_full_name.split("/", 1)
+        # remote_url = f"https://x-access-token:{github_token}@github.com/{owner}/{repo}.git"
 
-        post_log(backend_url, task_id, "Setting authenticated remote URL for push...")
-        run(f"git remote set-url origin {remote_url}", cwd=str(repo_dir))
+        # post_log(backend_url, task_id, "Setting authenticated remote URL for push...")
+        # run(f"git remote set-url origin {remote_url}", cwd=str(repo_dir))
 
-        post_log(backend_url, task_id, f"Pushing branch: {work_branch}")
-        run(f"git push -u origin {work_branch}", cwd=str(repo_dir))
-        post_log(backend_url, task_id, "Push completed.")
+        # post_log(backend_url, task_id, f"Pushing branch: {work_branch}")
+        # run(f"git push -u origin {work_branch}", cwd=str(repo_dir))
+        # post_log(backend_url, task_id, "Push completed.")
 
 
-        post_log(backend_url, task_id, "Requesting backend to create PR (/publish)...")
-        httpx.post(f"{backend_url}/tasks/{task_id}/publish", json={}, timeout=30.0)
-        post_log(backend_url, task_id, "PR created (or already exists).")
+        # post_log(backend_url, task_id, "Requesting backend to create PR (/publish)...")
+        # httpx.post(f"{backend_url}/tasks/{task_id}/publish", json={}, timeout=30.0)
+        # post_log(backend_url, task_id, "PR created (or already exists).")
 
   
         # 11) Mark complete
-        post_log(backend_url, task_id, "Task completed successfully.")
-        mark_complete(backend_url, task_id)
+        # post_log(backend_url, task_id, "Task completed successfully.")
+        # mark_complete(backend_url, task_id)
+
+        post_log(backend_url, task_id, "Work branch created and committed locally. Waiting for user to push + create PR.")
+        set_status(backend_url, task_id, "READY_FOR_REVIEW")
+        post_log(backend_url, task_id, "Task is READY_FOR_REVIEW. Use UI buttons: Push Branch -> Create PR.")
 
         print("\n=== Agent done (v2) ===")
 

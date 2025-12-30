@@ -1,0 +1,675 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mini Jules</title>
+  <style>
+    :root{
+      --bg: #0b1020;
+      --panel: #111a33;
+      --card: #0f1630;
+      --muted: #9aa7c7;
+      --text: #e7ecff;
+      --border: rgba(255,255,255,0.08);
+      --accent: #6aa9ff;
+      --good: #31d0aa;
+      --warn: #ffcc66;
+      --bad: #ff6b6b;
+      --shadow: 0 10px 30px rgba(0,0,0,0.35);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: var(--sans);
+      background: radial-gradient(1200px 800px at 10% 0%, #17214b 0%, var(--bg) 55%);
+      color: var(--text);
+    }
+    a{ color: var(--accent); text-decoration:none; }
+    a:hover{ text-decoration:underline; }
+
+    .topbar{
+      position: sticky; top:0; z-index:10;
+      background: rgba(11,16,32,0.75);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .topbar-inner{
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 14px 18px;
+      display:flex; align-items:center; justify-content:space-between;
+      gap: 12px;
+    }
+    .brand{
+      display:flex; align-items:center; gap:10px;
+      font-weight: 800; letter-spacing:0.2px;
+    }
+    .logo{
+      width: 32px; height: 32px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #6aa9ff 0%, #9d7bff 50%, #31d0aa 100%);
+      box-shadow: 0 8px 20px rgba(106,169,255,0.25);
+    }
+    .right{
+      display:flex; align-items:center; gap:10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .container{
+      max-width: 1200px;
+      margin: 18px auto;
+      padding: 0 18px 22px;
+      display:grid;
+      grid-template-columns: 380px 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 980px){
+      .container{ grid-template-columns: 1fr; }
+    }
+
+    .panel{
+      background: rgba(17,26,51,0.65);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .panel h3{
+      margin:0;
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+      letter-spacing: 0.3px;
+      color: #dbe5ff;
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .panel .body{ padding: 14px; }
+
+    .field{ margin-bottom: 12px; }
+    label{
+      display:block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input, select, textarea{
+      width:100%;
+      padding: 10px 10px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(15,22,48,0.8);
+      color: var(--text);
+      outline:none;
+    }
+    textarea{ min-height: 110px; resize: vertical; }
+    input::placeholder, textarea::placeholder{ color: rgba(154,167,199,0.55); }
+
+    .row{ display:flex; gap:10px; }
+    .row > *{ flex: 1; }
+
+    button{
+      border: 1px solid var(--border);
+      background: rgba(106,169,255,0.14);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 12px;
+      cursor:pointer;
+      font-weight: 600;
+      transition: transform 0.04s ease-in-out;
+    }
+    button:hover{ background: rgba(106,169,255,0.22); }
+    button:active{ transform: translateY(1px); }
+    button[disabled]{
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .primary{
+      background: linear-gradient(135deg, rgba(106,169,255,0.45), rgba(49,208,170,0.22));
+    }
+    .primary:hover{ background: linear-gradient(135deg, rgba(106,169,255,0.58), rgba(49,208,170,0.30)); }
+    .danger{
+      background: rgba(255,107,107,0.15);
+    }
+    .ghost{ background: transparent; }
+
+    .badge{
+      display:inline-flex; align-items:center; gap:6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .dot{ width:8px; height:8px; border-radius:50%; background: var(--muted); }
+    .dot.good{ background: var(--good); }
+    .dot.warn{ background: var(--warn); }
+    .dot.bad{ background: var(--bad); }
+
+    .status-pill{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(15,22,48,0.45);
+    }
+
+    .tabs{
+      display:flex; gap:8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(15,22,48,0.55);
+      align-items:center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+    .tabset{ display:flex; gap:8px; }
+    .tab{
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      cursor:pointer;
+      font-size: 12px;
+      color: var(--muted);
+      user-select:none;
+    }
+    .tab.active{
+      color: var(--text);
+      background: rgba(106,169,255,0.14);
+    }
+
+    pre{
+      margin:0;
+      padding: 12px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #b9ffca;
+      background: #0a0f1f;
+      min-height: 340px;
+    }
+
+    .meta{
+      display:flex; flex-wrap:wrap; gap:10px;
+      padding: 12px 12px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .meta b{ color: #dbe5ff; font-weight:700; }
+
+    .help{
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+      margin-top: 8px;
+    }
+    code{
+      font-family: var(--mono);
+      font-size: 12px;
+      color: #dbe5ff;
+    }
+    .toast{
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      max-width: 420px;
+      background: rgba(17,26,51,0.9);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 12px 12px;
+      display:none;
+    }
+    .small-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <div style="font-size:14px;">Mini Jules</div>
+          <div style="font-size:12px;color:var(--muted);font-weight:600;">Agentic coding backend dashboard</div>
+        </div>
+      </div>
+      <div class="right">
+        <span id="loginBadge" class="badge"><span class="dot warn"></span><span>Not connected</span></span>
+        <button id="btnLogin" class="primary">Login with GitHub</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- Left panel -->
+    <div class="panel">
+      <h3>
+        <span>Create task</span>
+        <span class="status-pill" id="statusPill"><span class="dot warn"></span><span id="statusTextSmall">—</span></span>
+      </h3>
+      <div class="body">
+        <div class="field">
+          <div class="row">
+            <button id="btnLoadRepos" class="ghost">Load repos</button>
+            <button id="btnRefreshAll">Refresh task</button>
+          </div>
+          <div class="help">Loads your repos using your GitHub OAuth token stored in DB.</div>
+        </div>
+
+        <div class="field">
+          <label>Repository</label>
+          <select id="repoSelect"></select>
+          <div class="help">Selecting a repo will auto-load branches.</div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>Base branch (merge target)</label>
+            <select id="baseBranchSelect"></select>
+          </div>
+          <div class="field">
+            <label>Work branch (auto)</label>
+            <input id="workBranch" value="—" disabled />
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Target file (relative path)</label>
+          <input id="targetFile" placeholder="Snake.py" />
+          <div class="help">Example: <code>Snake.py</code> or <code>src/app.py</code></div>
+        </div>
+
+        <div class="field">
+          <label>Prompt</label>
+          <textarea id="prompt">Improve Snake.py: refactor into small functions, add comments, fix any obvious bugs, and keep behaviour the same.</textarea>
+        </div>
+
+        <!-- New gated workflow buttons -->
+        <div class="row">
+          <button id="btnCreate" class="primary">Create task</button>
+          <button id="btnPlan" disabled>Generate plan</button>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <button id="btnApproveStart" class="primary" disabled>Approve & Start</button>
+          <button id="btnCreatePR" disabled>Create PR</button>
+          <button id="btnPush" disabled>Push branch</button>
+        </div>
+
+        <div class="field" style="margin-top:12px;">
+          <label>Task ID</label>
+          <input id="taskId" placeholder="auto" />
+        </div>
+
+        <div class="help">
+          Tip: paste an existing Task ID and press <b>Refresh task</b> to inspect plan/logs/diff/PR.
+          <br><br>
+          Jules-like behavior: <b>Create</b> → <b>Plan</b> → <b>Approve</b> → <b>Run</b> → <b>Review diff</b> → <b>Create PR</b>.
+        </div>
+      </div>
+    </div>
+
+    <!-- Right panel -->
+    <div class="panel">
+      <div class="meta" id="meta">
+        <div><b>Status:</b> <span id="statusText">—</span></div>
+        <div><b>Repo:</b> <span id="repoText">—</span></div>
+        <div><b>Work branch:</b> <span id="workBranchText">—</span></div>
+        <div><b>PR:</b> <span id="prText">—</span></div>
+      </div>
+
+      <div class="tabs">
+        <div class="tabset">
+          <div class="tab active" data-tab="plan">Plan</div>
+          <div class="tab" data-tab="logs">Logs</div>
+          <div class="tab" data-tab="diff">Diff</div>
+        </div>
+        <div class="small-actions">
+          <button id="btnCopyBranch" class="ghost" disabled>Copy branch</button>
+          <button id="btnOpenPR" class="ghost" disabled>Open PR</button>
+        </div>
+      </div>
+
+      <pre id="output"></pre>
+      <div id="planSource" class="muted" style="margin-top:6px; font-size:12px;"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  const API = location.origin;
+
+  function toast(msg){
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.style.display = "block";
+    setTimeout(() => t.style.display = "none", 2800);
+  }
+
+  async function apiGet(path) {
+    const r = await fetch(API + path, { credentials: "include" });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
+  }
+  async function apiPost(path, body) {
+    const r = await fetch(API + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: body ? JSON.stringify(body) : null
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json().catch(() => ({}));
+  }
+
+  function setConnected(connected){
+    const badge = document.getElementById("loginBadge");
+    if(connected){
+      badge.innerHTML = '<span class="dot good"></span><span>GitHub connected</span>';
+    } else {
+      badge.innerHTML = '<span class="dot warn"></span><span>Not connected</span>';
+    }
+  }
+
+  function setStatusPill(status){
+    const pill = document.getElementById("statusPill");
+    let dot = "warn";
+    if(status === "COMPLETED") dot = "good";
+    if(status === "FAILED") dot = "bad";
+    if(status === "RUNNING") dot = "warn";
+    pill.innerHTML = `<span class="dot ${dot}"></span><span>${status || "—"}</span>`;
+  }
+
+  document.getElementById("btnLogin").onclick = () => {
+    window.location.href = API + "/auth/github/login";
+  };
+
+  async function loadRepos(){
+    const repos = await apiGet("/github/repos");
+    const sel = document.getElementById("repoSelect");
+    sel.innerHTML = "";
+    repos.forEach(r => {
+      const full = r.full_name || r;
+      const opt = document.createElement("option");
+      opt.value = full;
+      opt.textContent = full;
+      sel.appendChild(opt);
+    });
+  }
+
+  async function loadBranchesForSelectedRepo(){
+    const full = document.getElementById("repoSelect").value;
+    if(!full || !full.includes("/")) return;
+    const [owner, repo] = full.split("/", 2);
+
+    const branches = await apiGet(`/github/repos/${owner}/${repo}/branches`);
+    const baseSel = document.getElementById("baseBranchSelect");
+    baseSel.innerHTML = "";
+
+    branches.forEach(b => {
+      const name = b.name || b;
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      baseSel.appendChild(opt);
+    });
+
+    const names = branches.map(b => (b.name || b));
+    if(names.includes("main")) baseSel.value = "main";
+    else if(names.includes("master")) baseSel.value = "master";
+    else if(names.length) baseSel.value = names[0];
+
+    toast("Branches loaded");
+  }
+
+  document.getElementById("btnLoadRepos").onclick = async () => {
+    try{
+      await loadRepos();
+      setConnected(true);
+      toast("Repos loaded");
+      await loadBranchesForSelectedRepo();
+    }catch(e){
+      setConnected(false);
+      alert("Load repos failed. You may need to login.\n\n" + e.message);
+    }
+  };
+
+  document.getElementById("repoSelect").onchange = async () => {
+    try{
+      await loadBranchesForSelectedRepo();
+    }catch(e){
+      alert("Failed to load branches.\n\n" + e.message);
+    }
+  };
+
+  function setActiveTab(tabName){
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    const el = document.querySelector(`.tab[data-tab="${tabName}"]`);
+    if(el) el.classList.add("active");
+  }
+
+  async function refreshAll(){
+    const id = document.getElementById("taskId").value.trim();
+    if(!id) return toast("Enter a Task ID or create a task.");
+
+    try{
+      const t = await apiGet(`/tasks/${id}`);
+
+      document.getElementById("statusText").textContent = t.status || "—";
+      setStatusPill(t.status || "—");
+
+      document.getElementById("repoText").textContent = t.repo_full_name || "—";
+      document.getElementById("workBranchText").textContent = t.work_branch || "—";
+      document.getElementById("workBranch").value = t.work_branch || "—";
+
+      // PR display
+      const prText = document.getElementById("prText");
+      const btnOpenPR = document.getElementById("btnOpenPR");
+      if(t.pr_url){
+        const label = t.pr_number ? `PR #${t.pr_number}` : "PR";
+        prText.innerHTML = `<a href="${t.pr_url}" target="_blank">${label}</a>`;
+        btnOpenPR.disabled = false;
+        btnOpenPR.onclick = () => window.open(t.pr_url, "_blank");
+      } else {
+        prText.textContent = "—";
+        btnOpenPR.disabled = true;
+        btnOpenPR.onclick = null;
+      }
+
+      // Copy branch button
+      const btnCopyBranch = document.getElementById("btnCopyBranch");
+      btnCopyBranch.disabled = !t.work_branch;
+      btnCopyBranch.onclick = async () => {
+        await navigator.clipboard.writeText(t.work_branch || "");
+        toast("Branch copied");
+      };
+
+      // Enable Create PR if we have a work branch and no PR yet
+      const btnCreatePR = document.getElementById("btnCreatePR");
+      btnCreatePR.disabled = !(t.work_branch && !t.pr_url);
+
+      // Push button
+      const btnPush = document.getElementById("btnPush");
+      // default disabled
+      btnPush.disabled = true;
+
+      // Gate buttons based on status
+      const btnPlan = document.getElementById("btnPlan");
+      const btnApproveStart = document.getElementById("btnApproveStart");
+
+      // default disable
+      btnPlan.disabled = true;
+      btnApproveStart.disabled = true;
+
+      // Allow plan generation or re-plan in common planning states
+      if(["QUEUED", "PLANNED", "PLAN_READY", "APPROVED"].includes(t.status)) btnPlan.disabled = false;
+      if(["PLANNED", "PLAN_READY"].includes(t.status)) btnApproveStart.disabled = false;
+
+      // Enable push only when the task is ready for review and a work branch exists
+      if(t.work_branch && t.status === "READY_FOR_REVIEW") btnPush.disabled = false;
+
+      // active tab content
+      const activeTab = document.querySelector(".tab.active").dataset.tab;
+
+      if(activeTab === "plan"){
+        // expects task.plan_text to exist on GET /tasks/{id}
+        document.getElementById("output").textContent = t.plan_text || "(No plan yet)";
+        // show plan source when present
+        const src = t.plan_generated_by ? `Generated by ${t.plan_generated_by}` : "";
+        document.getElementById("planSource").textContent = src;
+      } else if(activeTab === "logs"){
+        const logs = await apiGet(`/tasks/${id}/logs`);
+        document.getElementById("output").textContent = logs.logs || "";
+        document.getElementById("planSource").textContent = "";
+      } else {
+        const diff = await apiGet(`/tasks/${id}/diff`);
+        document.getElementById("output").textContent = diff.diff || "";
+        document.getElementById("planSource").textContent = "";
+      }
+
+    }catch(e){
+      alert("Refresh failed: " + e.message);
+    }
+  }
+
+  document.getElementById("btnRefreshAll").onclick = refreshAll;
+
+  // 1) Create task (QUEUED) + set target file
+  document.getElementById("btnCreate").onclick = async () => {
+    try{
+      const repo_full_name = document.getElementById("repoSelect").value;
+      const branch = document.getElementById("baseBranchSelect").value || "main";
+      const prompt = document.getElementById("prompt").value;
+      const target_file = document.getElementById("targetFile").value.trim();
+
+      if(!repo_full_name) return alert("Select a repo first.");
+      if(!prompt.trim()) return alert("Prompt is empty.");
+      if(!target_file) return alert("Target file is empty. Example: Snake.py");
+
+      const task = await apiPost("/tasks", { repo_full_name, branch, prompt });
+      document.getElementById("taskId").value = task.id;
+      toast("Task created: " + task.id);
+
+      await apiPost(`/tasks/${task.id}/target`, { target_file });
+      toast("Target file set");
+
+      // Enable plan now (and refresh will also set it)
+      document.getElementById("btnPlan").disabled = false;
+
+      setActiveTab("plan");
+      await refreshAll();
+    }catch(e){
+      alert("Create failed:\n\n" + e.message);
+    }
+  };
+
+  // 2) Generate plan (PLANNED) — sends {force:true} when re-planning
+  document.getElementById("btnPlan").onclick = async () => {
+    const id = document.getElementById("taskId").value.trim();
+    if(!id) return toast("No task id");
+    try{
+      const t = await apiGet(`/tasks/${id}`);
+      const payload = (t.status === "QUEUED") ? {} : { force: true };
+      await apiPost(`/tasks/${id}/plan`, payload);
+      toast("Plan generated");
+      setActiveTab("plan");
+      await refreshAll();
+    }catch(e){
+      alert("Plan failed:\n\n" + e.message);
+    }
+  };
+
+  // Push branch (calls /tasks/{id}/push)
+  document.getElementById("btnPush").onclick = async () => {
+    const id = document.getElementById("taskId").value.trim();
+    if(!id) return toast("No task id");
+    try{
+      await apiPost(`/tasks/${id}/push`, {});
+      toast("Push initiated");
+      await refreshAll();
+    }catch(e){
+      alert("Push failed:\n\n" + e.message);
+    }
+  };
+
+  // 3) Approve + Start (APPROVED -> RUNNING)
+  document.getElementById("btnApproveStart").onclick = async () => {
+    const id = document.getElementById("taskId").value.trim();
+    if(!id) return toast("No task id");
+    try{
+      await apiPost(`/tasks/${id}/approve`, {});
+      toast("Approved");
+
+      await apiPost(`/tasks/${id}/start`, {});
+      toast("Task started");
+
+      setActiveTab("logs");
+      await refreshAll();
+    }catch(e){
+      alert("Approve/start failed:\n\n" + e.message);
+    }
+  };
+
+  // Create PR (manual)
+  document.getElementById("btnCreatePR").onclick = async () => {
+    const id = document.getElementById("taskId").value.trim();
+    if(!id) return toast("No task id");
+    try{
+      await apiPost(`/tasks/${id}/publish`, {});
+      toast("PR requested");
+      await refreshAll();
+    }catch(e){
+      alert("Create PR failed:\n\n" + e.message);
+    }
+  };
+
+  // Tabs click
+  document.querySelectorAll(".tab").forEach(el => {
+    el.onclick = async () => {
+      setActiveTab(el.dataset.tab);
+      await refreshAll();
+    };
+  });
+
+  // Poll logs when RUNNING
+  setInterval(async () => {
+    const id = document.getElementById("taskId").value.trim();
+    if(!id) return;
+    try{
+      const t = await apiGet(`/tasks/${id}`);
+      if(["RUNNING", "PUSHING"].includes(t.status)){
+      }
+    }catch(e){}
+  }, 2000);
+
+  // On load: try to load repos + branches silently
+  (async () => {
+    try{
+      await loadRepos();
+      setConnected(true);
+      await loadBranchesForSelectedRepo();
+    }catch(e){
+      setConnected(false);
+    }
+  })();
+</script>
+</body>
+</html>

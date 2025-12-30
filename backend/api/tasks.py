@@ -21,6 +21,11 @@ class TaskCreate(BaseModel):
     branch: str           # "main"
     prompt: str           # "Upgrade to Next.js 15..."
 
+class PlanOut(BaseModel):
+    task_id: int
+    status: str
+    plan: str
+
 
 class TaskLogAppend(BaseModel):
     message: str
@@ -33,8 +38,17 @@ class TaskResponse(BaseModel):
     prompt: str
     status: str
 
+    target_file: str | None = None
+    work_branch: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    diff_text: str | None = ""
+    log_text: str | None = ""
+    plan_text: str | None = None
+    plan_generated_by: str | None = None
+
     class Config:
-        from_attributes = True  # so we can return ORM model directly
+        from_attributes = True
 
 class TaskSetTarget(BaseModel):
     target_file: str      # e.g. "package.json"
@@ -49,9 +63,30 @@ class PublishIn(BaseModel):
 class WorkBranchIn(BaseModel):
     work_branch: str
 
+class StatusIn(BaseModel):
+    status: str
 
+class PlanOut(BaseModel):
+    plan: str
+
+class PlanIn(BaseModel):
+    force: bool = False
 
 # ----- Routes -----
+
+# Note: LLM-powered plan generation implemented further down (single /plan endpoint).
+
+@router.post("/{task_id}/status")
+def set_status(task_id: int, payload: StatusIn, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.status = payload.status
+    db.commit()
+    return {"ok": True, "status": task.status}
+
+
 
 
 
@@ -65,6 +100,20 @@ def set_work_branch(task_id: int, payload: WorkBranchIn, db: Session = Depends(g
     db.commit()
     return {"ok": True, "work_branch": task.work_branch}
 
+@router.post("/{task_id}/approve")
+def approve_task(task_id: int, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Allow approving when plan is PLANNED or PLAN_READY (LLM-generated plans produce PLAN_READY)
+    if task.status not in ("PLANNED", "PLAN_READY"):
+        raise HTTPException(status_code=400, detail=f"Cannot approve task in status {task.status}")
+
+    task.status = "APPROVED"
+    db.commit()
+    return {"ok": True, "status": task.status}
 
 
 @router.post("", response_model=TaskResponse)
@@ -126,7 +175,7 @@ def start_task(task_id: int, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    if task.status != "QUEUED":
+    if task.status != "APPROVED":
         raise HTTPException(status_code=400, detail=f"Cannot start task in status {task.status}")
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -236,51 +285,71 @@ def get_diff(task_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{task_id}/publish")
 async def publish_task(task_id: int, payload: PublishIn | None = None, db: Session = Depends(get_db)):
-    user_id = 1  # keep same dev approach
+    user_id = 1
 
     task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    if not task.work_branch:
-        raise HTTPException(status_code=400, detail="work_branch not set (agent did not push?)")
+    # Option B gate: PR only after PUSH
+    if task.status != "PUSHED":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot create PR until branch is pushed. Current status: {task.status}"
+        )
 
-    # parse owner/repo from repo_full_name
+    if not task.work_branch:
+        raise HTTPException(status_code=400, detail="work_branch not set")
+
     if not task.repo_full_name or "/" not in task.repo_full_name:
         raise HTTPException(status_code=400, detail="Invalid repo_full_name on task")
 
     owner, repo = task.repo_full_name.split("/", 1)
 
-    # get user's github token from DB (same method you already use for repos/branches)
-    # Example: user.github_access_token (adjust to your project)
-    user = db.query(User).filter(User.id == user_id).first()
     token = get_token_for_user(user_id)
-    if not user or not token:
+    if not token:
         raise HTTPException(status_code=401, detail="GitHub token missing")
 
-    title = (payload.title if payload and payload.title else f"Jules: Task {task.id}")
-    body = (payload.body if payload and payload.body else (task.prompt or ""))
+    title = payload.title if payload and payload.title else f"Jules: Task {task.id}"
+    body = payload.body if payload and payload.body else (task.prompt or "")
 
-    async with httpx.AsyncClient(
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-        },
-        timeout=30.0,
-    ) as client:
-        gh = GitHubClient(client)
+    # ✅ simplest correct usage with your GitHubClient
+    gh = GitHubClient(token)
+
+    # Pre-check: ensure work_branch has commits ahead of base branch. This avoids
+    # a confusing GitHub 422 when there are no commits between branches.
+    try:
+        cmp = await gh.compare_commits(owner, repo, task.branch, task.work_branch)
+        ahead_by = cmp.get("ahead_by", 0) if isinstance(cmp, dict) else 0
+    except Exception as e:
+        # If compare fails for some reason, surface as a helpful error
+        raise HTTPException(status_code=400, detail=f"Failed to compare branches: {e}") from e
+
+    if ahead_by == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No commits between {task.branch} and {task.work_branch}. "
+                "Make sure you pushed commits to the work branch before creating a PR."
+            ),
+        )
+
+    try:
         pr = await gh.create_pull_request(
             owner=owner,
             repo=repo,
-            head=task.work_branch,     # e.g. "jules/task-1"
-            base=task.branch,          # e.g. "main"
+            head=task.work_branch,
+            base=task.branch,
             title=title,
             body=body,
         )
+    except Exception as e:
+        # Include GitHub error details in the API response for easier debugging
+        raise HTTPException(status_code=400, detail=f"Failed to create PR: {e}") from e
 
     task.pr_url = pr.get("html_url")
     task.pr_number = pr.get("number")
-    task.status = "COMPLETED"
+    task.status = "PR_CREATED"
     db.commit()
 
     return {
@@ -291,3 +360,159 @@ async def publish_task(task_id: int, payload: PublishIn | None = None, db: Sessi
         "pr_number": task.pr_number,
         "status": task.status,
     }
+
+
+@router.post("/{task_id}/plan", response_model=PlanOut)
+async def generate_plan(task_id: int, payload: PlanIn | None = None, db: Session = Depends(get_db)):
+    """Generate a plan using an LLM. If `payload.force` is True, re-generate the plan even if not in a planning-ready state."""
+    import os
+    import openai
+
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    allow = task.status in ("QUEUED", "PLAN_READY") or (payload and payload.force)
+    if not allow:
+        raise HTTPException(status_code=400, detail=f"Cannot plan task in status {task.status}")
+
+    # Ensure we have a target file (we can still allow auto-detect in the future)
+    if not task.target_file:
+        raise HTTPException(status_code=400, detail="Target file not set")
+
+    # Fetch target file contents from GitHub (if possible)
+    file_content = None
+    try:
+        owner, repo = task.repo_full_name.split("/", 1)
+        token = get_token_for_user(user_id)
+        if token:
+            gh = GitHubClient(token)
+            try:
+                file_content = await gh.get_file(owner, repo, task.target_file, ref=task.branch)
+            except Exception:
+                file_content = None
+    except Exception:
+        file_content = None
+
+    # Call OpenAI to generate a structured plan
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured (OPENAI_API_KEY)")
+    openai.api_key = openai_key
+
+    system_prompt = (
+        "You are an assistant that writes concise, step-by-step implementation plans to modify a file in a repository. "
+        "Produce a clear numbered plan (1., 2., 3., ...). If file contents are provided, inspect them and highlight risky changes. "
+        "Keep the plan actionable and small — 5-12 steps."
+    )
+
+    user_lines = [
+        f"Repo: {task.repo_full_name}",
+        f"Base branch: {task.branch}",
+        f"Target file: {task.target_file}",
+        "",
+        f"User prompt: {task.prompt}",
+    ]
+    if file_content:
+        # Truncate if very large
+        txt = file_content if len(file_content) < 10000 else file_content[:10000] + "\n... [truncated]"
+        user_lines += ["", "File content:", txt]
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "\n".join(user_lines)},
+    ]
+
+    model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+
+    # Support both new (>1.0.0) OpenAI python client and the older interface
+    plan_text = None
+    last_err = None
+    try:
+        # New client: `from openai import OpenAI; client = OpenAI()`
+        from openai import OpenAI as OpenAIClient
+        client = OpenAIClient(api_key=openai_key)
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=600,
+            temperature=0.2,
+        )
+        # Try a few ways to extract the assistant content
+        try:
+            plan_text = resp.choices[0].message.content
+        except Exception:
+            try:
+                plan_text = resp.choices[0]["message"]["content"]
+            except Exception:
+                plan_text = None
+    except Exception as e:
+        last_err = e
+
+    if not plan_text:
+        try:
+            # Fallback to older openai lib usage
+            import openai as old_openai
+            old_openai.api_key = openai_key
+            resp = old_openai.ChatCompletion.create(
+                model=model,
+                messages=messages,
+                max_tokens=600,
+                temperature=0.2,
+            )
+            plan_text = resp["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            # Prefer the newer exception if present, otherwise the fallback's
+            detail = f"LLM request failed: {last_err or e}"
+            raise HTTPException(status_code=500, detail=detail) from (last_err or e)
+
+    # Save plan and mark ready for approval
+    task.plan_text = plan_text
+    task.plan_generated_by = f"openai:{model}"
+    task.status = "PLAN_READY"
+    db.commit()
+
+    return {"plan": plan_text}
+
+@router.post("/{task_id}/plan/approve")
+def approve_plan(task_id: int, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.status != "PLAN_READY":
+        raise HTTPException(status_code=400, detail=f"Cannot approve plan in status {task.status}")
+
+    task.status = "APPROVED"
+    db.commit()
+    return {"ok": True, "task_id": task.id, "status": task.status}
+
+
+@router.post("/{task_id}/push")
+def push_task_branch(task_id: int, db: Session = Depends(get_db)):
+    user_id = 1
+    task = db.query(Task).filter(Task.id == task_id, Task.user_id == user_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.status != "READY_FOR_REVIEW":
+        raise HTTPException(status_code=400, detail=f"Cannot push in status {task.status}")
+
+    if not task.work_branch:
+        raise HTTPException(status_code=400, detail="work_branch not set yet (agent didn’t create it)")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    token = get_token_for_user(user_id)
+    if not user or not token:
+        raise HTTPException(status_code=401, detail="GitHub token missing")
+
+    # Mark status first
+    task.status = "PUSHING"
+    db.commit()
+
+    # Spawn container in PUSH mode
+    start_task_container(task, user, mode="push")
+
+    return {"ok": True, "task_id": task.id, "status": task.status, "work_branch": task.work_branch}

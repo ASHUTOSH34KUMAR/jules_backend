@@ -28,5 +28,10 @@ class Task(Base):
     status = Column(String, nullable=False, default="QUEUED")  # QUEUED, RUNNING, COMPLETED, FAILED
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
     log_text = Column(Text, nullable=True, default="")                     # logs or error messages
+    plan_text = Column(Text, nullable=True, default="")
+
+    # source of plan (e.g. 'openai:gpt-3.5-turbo', 'human', etc.)
+    plan_generated_by = Column(String, nullable=True)
