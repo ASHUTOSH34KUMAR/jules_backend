@@ -502,9 +502,9 @@
         toast("Branch copied");
       };
 
-      // Enable Create PR if we have a work branch and no PR yet
+      // Enable Create PR only when branch is pushed (PUSHED) and no PR yet
       const btnCreatePR = document.getElementById("btnCreatePR");
-      btnCreatePR.disabled = !(t.work_branch && !t.pr_url);
+      btnCreatePR.disabled = !(t.work_branch && !t.pr_url && t.status === "PUSHED");
 
       // Push button
       const btnPush = document.getElementById("btnPush");

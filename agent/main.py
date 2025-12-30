@@ -364,9 +364,6 @@ def main():
 
         post_log(backend_url, task_id, f"Staging file: {rel_path}")
         run(f"git add {rel_path}", cwd=str(repo_dir))
-
-        post_work_branch(backend_url, task_id, work_branch)
-        post_log(backend_url, task_id, "work_branch saved to backend.")
         
         status = run_capture("git status --porcelain", cwd=str(repo_dir))
         if not status.strip():
@@ -379,6 +376,9 @@ def main():
         commit_msg = f"Jules: Task {task_id}"
         post_log(backend_url, task_id, f"Committing changes: {commit_msg}")
         run(f'git commit -m "{commit_msg}"', cwd=str(repo_dir), allow_fail=False)
+
+        post_work_branch(backend_url, task_id, work_branch)
+        post_log(backend_url, task_id, "work_branch saved to backend.")
 
         # Save work_branch to backend by reusing logs OR add a small endpoint later.
         # For now, agent will call /publish and backend will use task.work_branch from DB.
