@@ -260,6 +260,47 @@ def main():
             post_log(backend_url, task_id, "Setting authenticated remote URL for push...")
             run(f"git remote set-url origin {remote_url}", cwd=str(repo_dir))
 
+            # Fetch saved diff from backend and apply it (if present)
+            post_log(backend_url, task_id, "Fetching saved diff from backend (if any)...")
+            diff_text = ""
+            try:
+                resp = httpx.get(f"{backend_url}/tasks/{task_id}/diff", timeout=30.0)
+                if resp.status_code == 200:
+                    # backend returns {"task_id": id, "diff": "..."}
+                    diff_text = resp.json().get("diff", "") or ""
+            except Exception as e:
+                post_log(backend_url, task_id, f"[WARN] Failed to fetch diff: {e}")
+
+            if diff_text.strip():
+                patch_file = repo_dir / f"jules_task_{task_id}.patch"
+                post_log(backend_url, task_id, f"Applying patch from backend to branch {work_branch}...")
+                patch_file.write_text(diff_text, encoding="utf-8")
+
+                # Ensure git identity set
+                run('git config user.email "jules-agent@local"', cwd=str(repo_dir))
+                run('git config user.name "Jules Agent"', cwd=str(repo_dir))
+
+                try:
+                    # Apply patch and update the index (staging changes)
+                    run(f"git apply --index {patch_file}", cwd=str(repo_dir))
+
+                    # If apply succeeded, commit staged changes (if any)
+                    status = run_capture("git status --porcelain", cwd=str(repo_dir))
+                    if status.strip():
+                        run(f'git commit -m "Jules: Task {task_id} (apply diff)"', cwd=str(repo_dir))
+                        post_log(backend_url, task_id, "Patch applied and committed.")
+                    else:
+                        post_log(backend_url, task_id, "Patch applied but no changes detected (nothing to commit).")
+                except RuntimeError as e:
+                    # Fallback: try apply with --reject to generate .rej files (best-effort)
+                    post_log(backend_url, task_id, f"[ERROR] git apply failed: {e}. Attempting fallback apply --reject.")
+                    try:
+                        run(f"git apply --reject --whitespace=fix {patch_file}", cwd=str(repo_dir), allow_fail=True)
+                        post_log(backend_url, task_id, "Fallback apply attempted; check repo for .rej files.")
+                        raise RuntimeError("git apply failed; fallback applied with .rej files. Manual intervention may be needed.")
+                    except Exception:
+                        raise
+
             post_log(backend_url, task_id, f"Pushing branch: {work_branch}")
             run(f"git push -u origin {work_branch}", cwd=str(repo_dir))
             post_log(backend_url, task_id, "Push completed.")
@@ -311,10 +352,54 @@ def main():
         post_log(backend_url, task_id, f"Writing updated file: {rel_path}")
         file_path.write_text(updated, encoding="utf-8")
 
-        # 6) Quick Python syntax check for the changed file
-        post_log(backend_url, task_id, "Running python syntax check (py_compile)...")
-        run(f"python3 -m py_compile {rel_path}", cwd=str(repo_dir))
-        post_log(backend_url, task_id, "py_compile passed.")
+        # 6) File-type specific validation (run appropriate checks depending on the file)
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+        suffix = Path(rel_path).suffix.lower()
+
+        # Python files: run py_compile and fail on errors
+        if suffix == ".py":
+            post_log(backend_url, task_id, "Running python syntax check (py_compile)...")
+            run(f"python3 -m py_compile {rel_path}", cwd=str(repo_dir))
+            post_log(backend_url, task_id, "py_compile passed.")
+
+        # JSON files: validate JSON syntax
+        elif suffix == ".json":
+            post_log(backend_url, task_id, "Validating JSON syntax...")
+            import json
+            try:
+                json.loads(content)
+                post_log(backend_url, task_id, "JSON syntax OK.")
+            except Exception as e:
+                raise RuntimeError(f"JSON parse error: {e}")
+
+        # YAML files: try to validate if PyYAML is available (best-effort)
+        elif suffix in (".yml", ".yaml"):
+            post_log(backend_url, task_id, "Validating YAML syntax (PyYAML optional)...")
+            try:
+                import yaml
+                yaml.safe_load(content)
+                post_log(backend_url, task_id, "YAML syntax OK.")
+            except ImportError:
+                post_log(backend_url, task_id, "PyYAML not installed; skipping YAML validation.")
+            except Exception as e:
+                raise RuntimeError(f"YAML parse error: {e}")
+
+        # HTML files: basic heuristics + optional 'tidy' if present (best-effort)
+        elif suffix in (".html", ".htm"):
+            post_log(backend_url, task_id, "Running basic HTML sanity checks...")
+            if not content.strip():
+                raise RuntimeError("HTML file is empty")
+            if "<" not in content or ">" not in content:
+                post_log(backend_url, task_id, "[WARN] HTML appears malformed (no angle brackets found).")
+            # Try to run tidy if available (allow_fail to avoid crashing when not installed)
+            try:
+                run(f"tidy -e {rel_path}", cwd=str(repo_dir), allow_fail=True)
+                post_log(backend_url, task_id, "Finished optional tidy check (if installed).")
+            except Exception:
+                post_log(backend_url, task_id, "Optional tidy check could not be run; skipping.")
+
+        else:
+            post_log(backend_url, task_id, f"No file-specific checks for suffix '{suffix}'. Skipping checks.")
 
         # 7) Optional: keep your dependency/test detection (best effort)
         #    This is safe to keep minimal Jules-like behavior.
